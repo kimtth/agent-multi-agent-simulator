@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Agent LLM Simulator (Emojis & LLM Turns)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script type="importmap">
+      {
+        "imports": {
+          "@google/generative-ai": "https://esm.run/@google/generative-ai",
+          "marked": "https://esm.run/marked"
+        }
+      }
+    </script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+      /* Lucide Icons Font */
+      @font-face {
+        font-family: 'LucideIcons';
+        src: url(https://cdn.jsdelivr.net/npm/lucide-static@latest/font/Lucide.ttf) format('truetype');
+      }
+      .lucide { font-family: 'LucideIcons'; font-size: 1.25rem; line-height: 1; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+
+      /* Basic layout and font */
+      html, body { height: 100%; margin: 0; }
+      body { font-family: 'Inter', sans-serif; background-color: #f0f4f8; display: flex; flex-direction: column; }
+
+      /* Agent Map Styling */
+      #agentMapContainer { overflow: hidden; position: relative; }
+      #agentMap svg { display: block; width: 100%; height: 100%; cursor: grab; }
+      #agentMap svg:active { cursor: grabbing; }
+
+      /* D3 Link Styling */
+      .link { stroke: #94a3b8; stroke-width: 1.5px; stroke-dasharray: 4, 4; animation: dash 1s linear infinite; transition: stroke 0.3s ease, stroke-width 0.3s ease; }
+      @keyframes dash { to { stroke-dashoffset: -8; } }
+      .link-active { stroke: #3b82f6; stroke-width: 3px; stroke-dasharray: none; }
+      .link-label { font-size: 9px; fill: #3b82f6; font-weight: bold; text-anchor: middle; pointer-events: none; stroke: white; stroke-width: 2px; paint-order: stroke; }
+
+      /* D3 Node Styling */
+      .node circle { stroke: #fff; stroke-width: 1.5px; transition: transform 0.2s ease, stroke 0.3s ease, opacity 0.3s ease; fill: #6366f1; }
+      .node:hover circle { transform: scale(1.1); }
+      .node text { pointer-events: none; text-anchor: middle; } /* Base style for node text */
+      .node .node-label { font-size: 10px; fill: #334155; dominant-baseline: central; }
+      .node .node-label-bg { font-size: 10px; stroke: white; stroke-width: 3px; opacity: 0.8; dominant-baseline: central; } /* Background for name */
+      .node .node-emoji {
+          font-size: 1.6em; /* Larger emoji */
+          dominant-baseline: central;
+          fill: #1e293b; /* Slightly darker fill for emoji */
+          pointer-events: none;
+      }
+      .node.agent-speaking circle {
+          stroke: #10b981;
+          animation: pulse-speak 1.2s ease-in-out infinite;
+      }
+      @keyframes pulse-speak {
+          0%, 100% { transform: scale(1); opacity: 1; stroke-width: 1.5px; }
+          50% { transform: scale(1.15); opacity: 0.7; stroke-width: 4px; } /* Adjusted pulse */
+      }
+
+
+      /* Message Box Styling */
+      #message-box { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); color: white; padding: 10px 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); z-index: 100; opacity: 0; transition: opacity 0.5s ease; font-size: 0.875rem; }
+      #message-box.show { opacity: 1; }
+
+      /* Spinner Styling */
+      .spinner { border: 4px solid rgba(0, 0, 0, 0.1); border-radius: 50%; border-top-color: #3b82f6; width: 24px; height: 24px; animation: spin 1s ease-in-out infinite; }
+      .button-spinner { border-color: rgba(255, 255, 255, 0.3); border-top-color: #fff; width: 20px; height: 20px; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+
+      /* Tooltip Styling */
+      #agentTooltip { position: fixed; background-color: rgba(30, 41, 59, 0.9); color: white; padding: 8px 12px; border-radius: 6px; font-size: 0.8rem; z-index: 50; pointer-events: none; white-space: nowrap; transition: opacity 0.2s ease; box-shadow: 0 2px 5px rgba(0,0,0,0.2); transform: translateX(-50%); }
+
+      /* Summary Modal Styling */
+      #summaryModalBackdrop { position: fixed; inset: 0; background-color: rgba(0, 0, 0, 0.5); z-index: 100; transition: opacity 0.3s ease; }
+      #summaryModal { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background-color: white; border-radius: 12px; box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1); padding: 24px; z-index: 110; width: 90%; max-width: 600px; transition: transform 0.3s ease, opacity 0.3s ease; }
+      #summaryModalContent { max-height: 60vh; overflow-y: auto; }
+      /* Basic Markdown styling for summary */
+      #summaryText > *:first-child { margin-top: 0; }
+      #summaryText h1, #summaryText h2, #summaryText h3 { margin-bottom: 0.5em; margin-top: 1em; font-weight: 600; }
+      #summaryText h1 { font-size: 1.25em; } #summaryText h2 { font-size: 1.1em; } #summaryText h3 { font-size: 1em; }
+      #summaryText p { margin-bottom: 0.75em; } #summaryText ul, #summaryText ol { margin-left: 1.5em; margin-bottom: 0.75em; }
+      #summaryText li { margin-bottom: 0.25em; } #summaryText strong { font-weight: 600; }
+      #summaryText code { background-color: #f3f4f6; padding: 0.2em 0.4em; border-radius: 4px; font-size: 0.9em; }
+      #summaryText pre { background-color: #f3f4f6; padding: 0.5em; border-radius: 4px; overflow-x: auto; }
+
+      /* Responsive Height Adjustments */
+      .map-section-height { height: 55vh; }
+      .bottom-panel-height { height: 35vh; max-height: 350px; }
+
+      /* Dashboard Agent List Styling */
+      .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; flex-shrink: 0; }
+      .status-idle { background-color: #94a3b8; } .status-speaking { background-color: #10b981; }
+      .agent-list-item { display: flex; flex-direction: column; gap: 2px; padding-bottom: 6px; border-bottom: 1px dashed #e5e7eb; }
+      .agent-list-item > div:first-child { display: flex; align-items: center; gap: 4px; }
+      .agent-role-dash { color: #64748b; margin-left: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1; min-width: 0;}
+      .agent-msg-count { color: #3b82f6; margin-left: auto; white-space: nowrap; padding-left: 8px; }
+      .agent-details { font-size: 0.7rem; color: #475569; padding-left: 14px; }
+      .agent-details strong { font-weight: 500; color: #334155; }
+      .agent-details ul { list-style: disc; margin-left: 1em; }
+    </style>
+</head>
+<body class="p-4 md:p-6 lg:p-8">
+
+    <header class="mb-4 md:mb-6 text-center flex-shrink-0">
+        <h1 class="text-3xl md:text-4xl font-bold text-slate-800">Multi-Agent LLM Simulator</h1>
+        <p class="text-slate-600 mt-1 md:mt-2">Visualize agents. Use mouse wheel to zoom, drag background to pan, drag nodes to arrange.</p>
+    </header>
+
+    <div class="flex flex-col lg:flex-row gap-6 flex-grow map-section-height mb-6">
+
+        <aside class="lg:w-1/4 bg-white p-4 rounded-xl shadow-lg border border-slate-200 flex flex-col h-full">
+            <h2 class="text-lg font-semibold mb-3 text-slate-700 border-b pb-1.5 flex-shrink-0">Dashboard</h2>
+            <div class="space-y-4 overflow-y-auto pr-1 flex-grow text-sm">
+                <div>
+                    <h3 class="font-semibold text-slate-600 mb-1">Goal:</h3>
+                    <p id="dashboardGoal" class="text-slate-500 italic text-xs break-words">Not started</p>
+                </div>
+                 <div>
+                    <h3 class="font-semibold text-slate-600 mb-1">State:</h3>
+                    <p id="dashboardSimState" class="text-slate-500 font-medium">Idle</p>
+                </div>
+                <div>
+                    <h3 class="font-semibold text-slate-600 mb-1">Progress:</h3>
+                    <p id="dashboardTurn" class="text-slate-500">Turn 0</p>
+                </div>
+                 <div>
+                    <h3 class="font-semibold text-slate-600 mb-1">Agent Status:</h3>
+                    <ul id="dashboardAgentList" class="space-y-2 text-xs">
+                        <li class="text-slate-400">No agents yet...</li>
+                    </ul>
+                </div>
+            </div>
+        </aside>
+
+        <section id="agentMapContainer" class="bg-white rounded-xl shadow-lg border border-slate-200 flex-grow relative h-full">
+            <div id="agentMap" class="absolute inset-0">
+                <p id="mapPlaceholder" class="absolute inset-0 flex items-center justify-center text-slate-400 z-[-1]">Start the simulation to visualize agents.</p>
+                <div id="planningLoader" class="absolute inset-0 flex flex-col items-center justify-center bg-white/80 z-30 hidden">
+                     <div class="spinner"></div>
+                     <p class="text-slate-600 mt-2">Gemini is planning agents...</p>
+                </div>
+             </div>
+             <div id="agentTooltip" class="hidden">Tooltip content</div>
+        </section>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-shrink-0">
+
+        <aside class="bg-white p-4 rounded-xl shadow-lg border border-slate-200 flex flex-col bottom-panel-height">
+             <h2 class="text-lg font-semibold mb-3 text-slate-700 border-b pb-1.5 flex-shrink-0">Setup</h2>
+             <div class="space-y-3 overflow-y-auto pr-1 flex-grow">
+                 <div >
+                     <label for="apiKey" class="block text-sm font-medium text-slate-600 mb-1">Gemini API Key</label>
+                     <div class="relative">
+                         <input type="password" id="apiKey" name="apiKey" placeholder="Enter your API Key" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition duration-150 ease-in-out text-sm shadow-sm">
+                         <button id="toggleApiKey" type="button" class="absolute inset-y-0 right-0 px-3 flex items-center text-slate-500 hover:text-slate-700" aria-label="Toggle API Key visibility"><span class="lucide eye-icon"></span></button> </div>
+                      <p class="text-xs text-slate-500 mt-1">Handled client-side. Not stored.</p>
+                 </div>
+                 <div >
+                     <label for="goalPrompt" class="block text-sm font-medium text-slate-600 mb-1">Goal Prompt</label>
+                     <textarea id="goalPrompt" name="goalPrompt" rows="3" placeholder="Describe the goal for the agents..." class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition duration-150 ease-in-out text-sm shadow-sm resize-none"></textarea>
+                 </div>
+                  <div >
+                     <label for="modelSelect" class="block text-sm font-medium text-slate-600 mb-1">Gemini Model</label>
+                     <select id="modelSelect" name="modelSelect" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition duration-150 ease-in-out text-sm shadow-sm bg-white">
+                         <option value="gemini-2.0-flash">Gemini 2.0 Flash (Fast)</option>
+                         <option value="gemini-2.5-pro-preview-03-25">Gemini Pro 2.5 Pro (Preview)</option>
+                      </select>
+                 </div>
+                 <button id="startSimulation" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-lg shadow hover:shadow-md transition duration-200 ease-in-out flex items-center justify-center gap-2 mt-2 sticky bottom-0">
+                     <span class="lucide play-icon"></span> Start Simulation </button>
+             </div>
+        </aside>
+
+        <section class="bg-white p-4 rounded-xl shadow-lg border border-slate-200 flex flex-col bottom-panel-height">
+             <h2 class="text-lg font-semibold mb-3 text-slate-700 border-b pb-1.5 flex-shrink-0">Conversation Log</h2>
+             <div id="conversationLog" class="space-y-2 text-sm flex-grow overflow-y-auto pr-1">
+                 <p class="text-slate-400">Conversation log will appear here...</p>
+             </div>
+        </section>
+
+        <aside class="bg-white p-4 rounded-xl shadow-lg border border-slate-200 flex flex-col bottom-panel-height">
+            <h2 class="text-lg font-semibold mb-3 text-slate-700 border-b pb-1.5 flex-shrink-0">Current Message</h2>
+            <div id="currentMessageContent" class="flex-grow space-y-1 overflow-y-auto text-sm pr-1">
+                <p id="currentMessagePlaceholder" class="text-slate-500">Waiting for agent...</p>
+                <div id="currentMessageHolder" class="hidden space-y-1">
+                     <div class="font-semibold text-indigo-700" id="currentAgentName"></div>
+                     <p class="text-slate-700 break-words" id="currentAgentMessage"></p>
+                </div>
+            </div>
+        </aside>
+
+    </div>
+
+    <div id="message-box"></div>
+
+    <div id="summaryModalBackdrop" class="hidden opacity-0">
+        <div id="summaryModal" class="opacity-0 scale-95">
+             <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-semibold text-slate-800">Simulation Summary</h3>
+                <button id="closeSummaryModal" class="text-slate-500 hover:text-slate-700">
+                    <span class="lucide"></span> </button>
+             </div>
+             <div id="summaryModalContent" class="text-sm text-slate-600 space-y-3">
+                 <div id="summaryLoader" class="flex flex-col items-center justify-center p-8">
+                     <div class="spinner"></div>
+                     <p class="mt-3 text-slate-500">Generating summary...</p>
+                 </div>
+                 <div id="summaryText" class="hidden prose prose-sm max-w-none"></div>
+                 <p id="summaryError" class="hidden text-red-600"></p>
+             </div>
+        </div>
+    </div>
+
+
+    <script type="module">
+        import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
+        import { marked } from 'marked';
+
+        // --- DOM Element References ---
+        const apiKeyInput = document.getElementById('apiKey');
+        const toggleApiKeyButton = document.getElementById('toggleApiKey');
+        const eyeIcon = toggleApiKeyButton.querySelector('.eye-icon');
+        const goalPromptInput = document.getElementById('goalPrompt');
+        const modelSelect = document.getElementById('modelSelect');
+        const startSimulationButton = document.getElementById('startSimulation');
+        const agentMapContainer = document.getElementById('agentMapContainer');
+        const agentMap = document.getElementById('agentMap');
+        const mapPlaceholder = document.getElementById('mapPlaceholder');
+        const planningLoader = document.getElementById('planningLoader');
+        const conversationLog = document.getElementById('conversationLog');
+        const messageBox = document.getElementById('message-box');
+        const agentTooltip = document.getElementById('agentTooltip');
+        const currentMessagePlaceholder = document.getElementById('currentMessagePlaceholder');
+        const currentMessageHolder = document.getElementById('currentMessageHolder');
+        const currentAgentNameElement = document.getElementById('currentAgentName');
+        const currentAgentMessageElement = document.getElementById('currentAgentMessage');
+        const summaryModalBackdrop = document.getElementById('summaryModalBackdrop');
+        const summaryModal = document.getElementById('summaryModal');
+        const closeSummaryModalButton = document.getElementById('closeSummaryModal');
+        const summaryLoader = document.getElementById('summaryLoader');
+        const summaryTextElement = document.getElementById('summaryText');
+        const summaryErrorElement = document.getElementById('summaryError');
+        const dashboardGoalElement = document.getElementById('dashboardGoal');
+        const dashboardTurnElement = document.getElementById('dashboardTurn');
+        const dashboardAgentListElement = document.getElementById('dashboardAgentList');
+        const dashboardSimStateElement = document.getElementById('dashboardSimState');
+
+        // --- Simulation State Variables ---
+        let simulationRunning = false;
+        let simulationState = 'Idle';
+        let agents = [];
+        let agentMapById = new Map();
+        let d3Nodes = [];
+        let d3Links = [];
+        let conversationHistory = [];
+        let agentMessageCounts = {};
+        let currentTurn = 0;
+        let nextAgentIdToSpeak = null;
+        let genAI = null;
+        let model = null;
+        let messageTimeout;
+        let resizeTimeout;
+        let activeTooltipAgentId = null;
+        let d3Simulation = null;
+        let d3Svg = null;
+        let d3ZoomableGroup = null;
+        let d3LinkElements = null;
+        let d3NodeElements = null;
+        let currentAgentHighlightTimeout = null;
+
+        // --- Constants ---
+        const NODE_RADIUS = 30;
+        const GOAL_COMPLETE_TAG = "[GOAL_COMPLETE]";
+        const MAX_HISTORY_FOR_PROMPT = 10;
+
+        // --- Safety Settings ---
+        const safetySettings = [
+            { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
+            { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
+            { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
+            { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
+        ];
+
+        /**
+         * Updates the simulation state display and button.
+         * @param {string} newState - New state string.
+         */
+        function setSimulationState(newState) {
+            simulationState = newState;
+            if (dashboardSimStateElement) dashboardSimStateElement.textContent = newState;
+            if (startSimulationButton) {
+                 if (newState === 'Planning' || newState === 'SelectingNext') {
+                    startSimulationButton.innerHTML = `<div class="spinner button-spinner mr-2"></div> ${newState}...`;
+                    startSimulationButton.disabled = true;
+                    startSimulationButton.classList.add('opacity-50', 'cursor-not-allowed');
+                 } else if (newState === 'Running') {
+                    startSimulationButton.innerHTML = `<span class="lucide pause-icon mr-2"></span> Stop Simulation`;
+                    startSimulationButton.disabled = false;
+                    startSimulationButton.classList.remove('opacity-50', 'cursor-not-allowed');
+                 } else if (newState === 'Idle' || newState === 'Finished' || newState === 'Error') {
+                    startSimulationButton.innerHTML = `<span class="lucide play-icon"></span> Start Simulation`;
+                    startSimulationButton.disabled = false;
+                    startSimulationButton.classList.remove('opacity-50', 'cursor-not-allowed');
+                 }
+            }
+        }
+
+        /**
+         * Shows a temporary message box.
+         * @param {string} text - Message text.
+         * @param {'error' | 'success' | 'info'} type - Message type.
+         * @param {number} duration - Duration in ms.
+         */
+        function showMessage(text, type = 'error', duration = 3000) {
+             messageBox.textContent = text;
+             let bgColorClass = 'bg-red-500';
+             if (type === 'success') bgColorClass = 'bg-green-500';
+             else if (type === 'info') bgColorClass = 'bg-blue-500';
+             messageBox.className = `show ${bgColorClass} text-white px-4 py-2 rounded-lg shadow-md fixed bottom-5 left-1/2 transform -translate-x-1/2 z-[100] transition-opacity duration-300`;
+             clearTimeout(messageTimeout);
+             messageTimeout = setTimeout(() => {
+                messageBox.style.opacity = '0';
+                setTimeout(() => messageBox.classList.remove('show'), 300);
+             }, duration);
+             requestAnimationFrame(() => { messageBox.style.opacity = '1'; });
+        }
+
+        // --- Event Listener for API Key Toggle ---
+        toggleApiKeyButton.addEventListener('click', () => {
+             const isPassword = apiKeyInput.type === 'password';
+             apiKeyInput.type = isPassword ? 'text' : 'password';
+             if (eyeIcon) eyeIcon.textContent = isPassword ? '' : '';
+        });
+
+        /**
+         * Resets the simulation state and UI.
+         */
+        function clearSimulation() {
+            hideAgentTooltip(); hideSummaryModal();
+            if (d3Simulation) { d3Simulation.stop(); d3Simulation = null; }
+            if (d3Svg) { d3Svg.remove(); d3Svg = null; }
+            d3ZoomableGroup = null; d3Nodes = []; d3Links = []; d3LinkElements = null; d3NodeElements = null;
+            simulationRunning = false; agents = []; agentMapById.clear();
+            conversationHistory = []; agentMessageCounts = {}; currentTurn = 0; nextAgentIdToSpeak = null;
+            conversationLog.innerHTML = '<p class="text-slate-400">Conversation log will appear here...</p>';
+            currentMessagePlaceholder.classList.remove('hidden'); currentMessageHolder.classList.add('hidden');
+            currentAgentNameElement.textContent = ''; currentAgentMessageElement.textContent = '';
+            mapPlaceholder.style.display = 'flex'; planningLoader.classList.add('hidden');
+            dashboardGoalElement.textContent = 'Not started'; dashboardTurnElement.textContent = 'Turn 0';
+            dashboardAgentListElement.innerHTML = '<li class="text-slate-400">No agents yet...</li>';
+            setSimulationState('Idle');
+            clearTimeout(currentAgentHighlightTimeout);
+        }
+
+        /**
+         * Shows the agent tooltip.
+         * @param {Event} event - Click event.
+         * @param {object} d - D3 node data.
+         */
+        function showAgentTooltip(event, d) {
+             if (activeTooltipAgentId === d.id) { hideAgentTooltip(); return; }
+             const agentData = agentMapById.get(d.id); if (!agentData) return;
+             agentTooltip.innerHTML = `<div class="font-semibold">${d.name}</div><div class="text-xs opacity-80">${d.role}</div>`;
+             let top = event.pageY - agentTooltip.offsetHeight - 10; let left = event.pageX;
+             if (top < 0) top = event.pageY + 15;
+             agentTooltip.style.top = `${top}px`; agentTooltip.style.left = `${left}px`;
+             agentTooltip.classList.remove('hidden');
+             requestAnimationFrame(() => { agentTooltip.style.opacity = '1'; });
+             activeTooltipAgentId = d.id;
+        }
+
+        /** Hides the agent tooltip. */
+        function hideAgentTooltip() {
+            if (activeTooltipAgentId === null) return;
+            agentTooltip.style.opacity = '0';
+            agentTooltip.addEventListener('transitionend', () => { if (agentTooltip.style.opacity === '0') { agentTooltip.classList.add('hidden'); } }, { once: true });
+            activeTooltipAgentId = null;
+        }
+
+        // --- D3 Drag Handlers ---
+        function dragstarted(event, d) { if (!event.active) d3Simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; d3.select(this).raise(); hideAgentTooltip(); }
+        function dragged(event, d) { d.fx = event.x; d.fy = event.y; }
+        function dragended(event, d) { if (!event.active) d3Simulation.alphaTarget(0); d.fx = null; d.fy = null; }
+        const drag = d3.drag().on("start", dragstarted).on("drag", dragged).on("end", dragended);
+
+        /**
+         * Maps agent role keywords to emojis.
+         * @param {string} role - The agent's role string.
+         * @returns {string} An emoji character.
+         */
+        function getEmojiForRole(role) {
+            const lowerRole = role.toLowerCase();
+            if (lowerRole.includes('ceo') || lowerRole.includes('leader') || lowerRole.includes('director')) return '👑';
+            if (lowerRole.includes('research')) return '🔬';
+            if (lowerRole.includes('scientist')) return '🧪';
+            if (lowerRole.includes('engineer') || lowerRole.includes('develop') || lowerRole.includes('software') || lowerRole.includes('code')) return '💻';
+            if (lowerRole.includes('infra') || lowerRole.includes('ops') || lowerRole.includes('cloud') || lowerRole.includes('server')) return '☁️';
+            if (lowerRole.includes('hardware') || lowerRole.includes('compute')) return '💡';
+            if (lowerRole.includes('data') || lowerRole.includes('database')) return '💾';
+            if (lowerRole.includes('train') || lowerRole.includes('model') || lowerRole.includes('llm') || lowerRole.includes('ai ')) return '🧠';
+            if (lowerRole.includes('product') || lowerRole.includes('manager')) return '📊';
+            if (lowerRole.includes('market') || lowerRole.includes('sales') || lowerRole.includes('launch')) return '📢';
+            if (lowerRole.includes('write') || lowerRole.includes('communicat')) return '✍️';
+            if (lowerRole.includes('coord') || lowerRole.includes('plan') || lowerRole.includes('strateg')) return '📋';
+            if (lowerRole.includes('evaluat') || lowerRole.includes('test') || lowerRole.includes('qa')) return '✅';
+            if (lowerRole.includes('api') || lowerRole.includes('deploy')) return '🚀';
+            if (lowerRole.includes('financ') || lowerRole.includes('fund') || lowerRole.includes('budget')) return '💰';
+            return '🤖'; // Default
+        }
+
+
+        /**
+         * Sets up the D3 force-directed graph visualization with emojis.
+         */
+        function setupD3Graph() {
+             const mapRect = agentMap.getBoundingClientRect(); const width = mapRect.width; const height = mapRect.height;
+             if (width <= 0 || height <= 0) { throw new Error("Agent map container has no dimensions."); }
+
+             d3.select(agentMap).select("svg").remove();
+             d3Svg = d3.select(agentMap).append("svg").attr("width", width).attr("height", height).attr("viewBox", [0, 0, width, height]);
+             d3ZoomableGroup = d3Svg.append("g");
+             d3LinkElements = d3ZoomableGroup.append("g").attr("class", "links");
+             d3NodeElements = d3ZoomableGroup.append("g").attr("class", "nodes");
+
+             d3Simulation = d3.forceSimulation(d3Nodes)
+                 .force("link", d3.forceLink(d3Links).id(d => d.id).distance(150).strength(0.5))
+                 .force("charge", d3.forceManyBody().strength(-400)) // Slightly stronger repulsion
+                 .force("center", d3.forceCenter(width / 2, height / 2))
+                 .on("tick", ticked);
+
+             const links = d3LinkElements.selectAll("line")
+                 .data(d3Links)
+                 .join("line")
+                 .attr("class", "link");
+
+             // Create node groups
+             const nodes = d3NodeElements.selectAll("g.node")
+                 .data(d3Nodes, d => d.id)
+                 .join("g")
+                 .attr("class", "node")
+                 .call(drag)
+                 .on('click', showAgentTooltip);
+
+             // Add circle
+             nodes.append("circle").attr("r", NODE_RADIUS);
+
+             // Add Emoji Text (Positioned slightly above center)
+             nodes.append("text")
+                 .attr("class", "node-emoji")
+                 .attr("dy", "-0.5em") // Position emoji above center
+                 .text(d => getEmojiForRole(d.role)); // Get emoji
+
+             // Add text label background (Aligned with name label, below emoji)
+             nodes.append("text")
+                  .attr("class", "node-label-bg")
+                  .attr("dy", "0.8em") // Position name below center
+                  .text(d => d.name);
+
+             // Add text label foreground (Aligned with name label, below emoji)
+             nodes.append("text")
+                 .attr("class", "node-label")
+                 .attr("dy", "0.8em") // Position name below center
+                 .text(d => d.name);
+
+             function ticked() {
+                 links.attr("x1", d => d.source.x).attr("y1", d => d.source.y).attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+                 nodes.attr("transform", d => `translate(${d.x},${d.y})`);
+             }
+
+             const zoom = d3.zoom().scaleExtent([0.3, 3]).on("zoom", zoomed);
+             d3Svg.call(zoom);
+
+             function zoomed(event) {
+                 d3ZoomableGroup.attr("transform", event.transform);
+                 hideAgentTooltip();
+             }
+        }
+
+        /**
+         * Adds a log entry.
+         * @param {string} agentName - Agent name or "System".
+         * @param {string} message - Message content.
+         */
+        function addLogEntry(agentName, message) {
+             const entry = document.createElement('div');
+             entry.className = 'p-2 bg-slate-100 rounded-md border border-slate-200 break-words';
+             const sanitizedMessage = message.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+             entry.innerHTML = `<span class="font-semibold text-indigo-700">${agentName}:</span> ${sanitizedMessage}`;
+             const placeholder = conversationLog.querySelector('p.text-slate-400');
+             if (placeholder) { conversationLog.innerHTML = ''; }
+             conversationLog.appendChild(entry);
+             conversationLog.scrollTop = conversationLog.scrollHeight;
+        }
+
+        /**
+         * Parses the JSON simulation plan.
+         * @param {string} responseText - Raw LLM response.
+         * @returns {object | null} Parsed plan or null on error.
+         */
+        function parseSimulationPlan(responseText) {
+             try {
+                 const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```|({[\s\S]*})/);
+                 if (!jsonMatch || (!jsonMatch[1] && !jsonMatch[2])) { throw new Error("Could not find JSON agent plan in the response."); }
+                 const jsonString = jsonMatch[1] || jsonMatch[2];
+                 const data = JSON.parse(jsonString);
+
+                 if (!data || !Array.isArray(data.agents) || data.agents.length === 0) { throw new Error("Invalid JSON: 'agents' array not found or empty."); }
+                 data.agents.forEach((agent, index) => {
+                     if (typeof agent.id !== 'number' || typeof agent.name !== 'string' || typeof agent.role !== 'string') { throw new Error(`Agent ${index}: missing/invalid id, name, or role.`); }
+                     agent.tools = (Array.isArray(agent.tools) && agent.tools.every(t => typeof t === 'string')) ? agent.tools : [];
+                     agent.knowledge = (Array.isArray(agent.knowledge) && agent.knowledge.every(k => typeof k === 'string')) ? agent.knowledge : [];
+                 });
+
+                 if (!data.links) { data.links = []; }
+                 else if (!Array.isArray(data.links)) { throw new Error("Invalid JSON: 'links' is not an array."); }
+                 else {
+                     const agentIds = new Set(data.agents.map(a => a.id));
+                     data.links.forEach((link, index) => {
+                         if (typeof link.source !== 'number' || typeof link.target !== 'number' || !agentIds.has(link.source) || !agentIds.has(link.target)) { throw new Error(`Link ${index}: invalid source/target ID.`); }
+                     });
+                 }
+                 return { agents: data.agents, links: data.links };
+             } catch (error) {
+                 console.error("Failed to parse simulation plan:", error);
+                 showMessage(`Error parsing simulation plan: ${error.message}`);
+                 return null;
+             }
+        }
+
+         /**
+         * Updates the dashboard panel.
+         * @param {number | null} currentAgentId - ID of the speaking agent.
+         */
+        function updateDashboard(currentAgentId = null) {
+            if (!dashboardTurnElement || !dashboardAgentListElement || !dashboardSimStateElement) return;
+
+            dashboardSimStateElement.textContent = simulationState;
+            dashboardTurnElement.textContent = `Turn ${currentTurn + 1}`;
+            dashboardAgentListElement.innerHTML = '';
+
+            if (agents.length === 0 && simulationState === 'Idle') {
+                 dashboardAgentListElement.innerHTML = '<li class="text-slate-400">No agents yet...</li>';
+                 return;
+            }
+
+            agents.forEach(agent => {
+                const li = document.createElement('li'); li.classList.add('agent-list-item');
+                const topLine = document.createElement('div');
+                const statusSpan = document.createElement('span'); statusSpan.classList.add('status-dot');
+                statusSpan.classList.add(agent.id === currentAgentId ? 'status-speaking' : 'status-idle');
+                const nameSpan = document.createElement('span'); nameSpan.classList.add('font-medium'); nameSpan.textContent = agent.name;
+                const roleSpan = document.createElement('span'); roleSpan.classList.add('agent-role-dash'); roleSpan.textContent = `(${agent.role || 'N/A'})`;
+                const countSpan = document.createElement('span'); countSpan.classList.add('agent-msg-count'); countSpan.textContent = `[${agentMessageCounts[agent.id] || 0}]`;
+                topLine.appendChild(statusSpan); topLine.appendChild(nameSpan); topLine.appendChild(roleSpan); topLine.appendChild(countSpan);
+
+                const detailsDiv = document.createElement('div'); detailsDiv.classList.add('agent-details');
+                let detailsContent = '';
+                if (agent.tools?.length > 0) { detailsContent += `<strong>Tools:</strong> ${agent.tools.join(', ')}<br>`; }
+                if (agent.knowledge?.length > 0) { detailsContent += `<strong>Knowledge:</strong> ${agent.knowledge.join(', ')}`; }
+                detailsDiv.innerHTML = detailsContent || 'No specific tools or knowledge listed.';
+
+                li.appendChild(topLine); li.appendChild(detailsDiv);
+                dashboardAgentListElement.appendChild(li);
+            });
+        }
+
+
+        /**
+         * Starts the main simulation process.
+         * @param {string} apiKey - Gemini API key.
+         * @param {string} goalPrompt - Simulation goal.
+         * @param {string} selectedModel - Gemini model name.
+         */
+        async function runRealSimulation(apiKey, goalPrompt, selectedModel) {
+            clearSimulation();
+            mapPlaceholder.style.display = 'none';
+            planningLoader.classList.remove('hidden');
+            simulationRunning = true; setSimulationState('Planning'); updateDashboard();
+
+            try {
+                genAI = new GoogleGenerativeAI(apiKey);
+                model = genAI.getGenerativeModel({ model: selectedModel });
+                addLogEntry("System", "Asking Gemini to plan agents...");
+
+                const planningPrompt = `Based on the goal "${goalPrompt}", define agents, links, tools, and knowledge. Return ONLY valid JSON { "agents": [ { "id": n, "name": "...", "role": "...", "tools": [], "knowledge": [] } ], "links": [ { "source": id1, "target": id2 } ] }. Ensure agents are connected.`;
+
+                const planningResult = await model.generateContent(planningPrompt);
+                const planningResponse = await planningResult.response; const planningText = planningResponse.text();
+                const simulationPlan = parseSimulationPlan(planningText);
+                if (!simulationPlan) { throw new Error("Failed to get a valid simulation plan."); }
+
+                agents = simulationPlan.agents;
+                agentMapById = new Map(agents.map(agent => [agent.id, agent]));
+                d3Nodes = agents.map(agent => ({ ...agent }));
+                d3Links = simulationPlan.links;
+                agentMessageCounts = {}; agents.forEach(agent => { agentMessageCounts[agent.id] = 0; });
+
+                addLogEntry("System", `Gemini planned ${agents.length} agents.`);
+                planningLoader.classList.add('hidden');
+                dashboardGoalElement.textContent = goalPrompt;
+                setSimulationState('Running');
+
+                requestAnimationFrame(() => {
+                    try {
+                        setupD3Graph();
+                        currentTurn = 0; conversationHistory = [];
+                        updateDashboard();
+                        addLogEntry("System", "Starting conversation...");
+                        nextAgentIdToSpeak = agents.length > 0 ? agents[0].id : null;
+                        if (nextAgentIdToSpeak !== null) {
+                             setTimeout(() => nextTurn(nextAgentIdToSpeak), 500);
+                        } else { throw new Error("No agents planned."); }
+                    } catch (graphError) {
+                         console.error("Error setting up D3 graph:", graphError);
+                         showMessage(`Error initializing visualization: ${graphError.message}`);
+                         setSimulationState('Error'); clearSimulation();
+                    }
+                });
+
+            } catch (error) {
+                console.error("Simulation Planning Error:", error);
+                showMessage(`Simulation planning failed: ${error.message}`);
+                setSimulationState('Error'); clearSimulation();
+            }
+        }
+
+        /**
+         * Executes a single simulation turn.
+         * @param {number} currentAgentId - ID of the agent speaking this turn.
+         */
+        async function nextTurn(currentAgentId) {
+            // --- Initial Checks & Stop Conditions ---
+            if (!simulationRunning || agents.length === 0 || !agentMapById.has(currentAgentId)) {
+                if (simulationRunning && agents.length === 0) addLogEntry("System", "Simulation ended: No agents.");
+                else if (simulationRunning && !agentMapById.has(currentAgentId)) addLogEntry("System", `Simulation ended: Invalid agent ID ${currentAgentId}.`);
+                else if (!simulationRunning && currentTurn > 0) addLogEntry("System", "Simulation stopped by user.");
+                simulationRunning = false; setSimulationState('Finished');
+                hideAgentTooltip();
+                if (d3NodeElements) d3NodeElements.selectAll('g.node').classed('agent-speaking', false);
+                updateDashboard(); return;
+            }
+
+            const currentAgentData = agentMapById.get(currentAgentId);
+            let goalAchieved = false;
+            let currentNodeElementSelection = null;
+            let messageText = "";
+
+            try {
+                // --- 1. Agent Response Generation ---
+                setSimulationState('Running');
+                clearTimeout(currentAgentHighlightTimeout);
+                updateDashboard(currentAgentId);
+
+                if (d3NodeElements) {
+                    d3NodeElements.selectAll('g.node').classed('agent-speaking', false);
+                    currentNodeElementSelection = d3NodeElements.selectAll('g.node').filter(d => d.id === currentAgentId);
+                    if (!currentNodeElementSelection.empty()) currentNodeElementSelection.classed('agent-speaking', true);
+                }
+                currentMessagePlaceholder.classList.remove('hidden'); currentMessageHolder.classList.add('hidden');
+
+                const historyString = conversationHistory.map(e => `${e.agentName}: ${e.message}`).join('\n');
+                const turnPrompt = `Goal: "${goalPromptInput.value.trim()}"\nYou are Agent ${currentAgentData.id}: **${currentAgentData.name}** (${currentAgentData.role}).\nTools: [${currentAgentData.tools.join(', ') || 'None'}] Knowledge: [${currentAgentData.knowledge.join(', ') || 'None'}]\nHistory (last ${MAX_HISTORY_FOR_PROMPT}):\n${historyString.split('\n').slice(-MAX_HISTORY_FOR_PROMPT).join('\n') || "(None)"}\nGenerate your response. If goal complete, end with "${GOAL_COMPLETE_TAG}". Response:`;
+
+                const turnResult = await model.generateContent({ contents: [{ role: "user", parts: [{ text: turnPrompt }] }], generationConfig: { maxOutputTokens: 150 }, safetySettings });
+                const turnResponse = await turnResult.response;
+
+                if (!turnResponse.candidates?.[0]?.content) { throw new Error(`Response blocked by safety filter (${turnResponse.promptFeedback?.blockReason || 'Unknown'}).`); }
+
+                messageText = turnResponse.text().trim();
+                if (messageText.endsWith(GOAL_COMPLETE_TAG)) { goalAchieved = true; messageText = messageText.slice(0, -GOAL_COMPLETE_TAG.length).trim(); }
+                if (messageText.startsWith(`${currentAgentData.name}:`)) { messageText = messageText.substring(currentAgentData.name.length + 1).trim(); }
+                if (messageText.startsWith('"') && messageText.endsWith('"')) { messageText = messageText.substring(1, messageText.length - 1); }
+                if (!messageText) { messageText = "(Agent provided empty response)"; console.warn(`${currentAgentData.name} empty response.`); }
+
+                // --- Update UI ---
+                addLogEntry(currentAgentData.name, messageText);
+                conversationHistory.push({ agentName: currentAgentData.name, message: messageText });
+                agentMessageCounts[currentAgentId]++;
+                currentAgentNameElement.textContent = currentAgentData.name; currentAgentMessageElement.textContent = messageText;
+                currentMessagePlaceholder.classList.add('hidden'); currentMessageHolder.classList.remove('hidden');
+                updateDashboard(currentAgentId);
+
+                // --- 2. Check Goal Completion ---
+                if (goalAchieved) {
+                    addLogEntry("System", `${currentAgentData.name} indicated goal met. Generating summary...`);
+                    setSimulationState('Summarizing'); updateDashboard();
+                    if (currentNodeElementSelection) currentNodeElementSelection.classed('agent-speaking', false);
+                    generateAndShowSummary(); simulationRunning = false; return;
+                }
+
+                // --- 3. Select Next Agent ---
+                setSimulationState('SelectingNext'); updateDashboard(currentAgentId);
+
+                const agentListString = agents.map(a => `- ID: ${a.id}, Name: ${a.name}, Role: ${a.role}`).join('\n');
+                const latestHistory = conversationHistory.map(e => `${e.agentName}: ${e.message}`).slice(-MAX_HISTORY_FOR_PROMPT).join('\n');
+                const nextAgentPrompt = `Goal: "${goalPromptInput.value.trim()}"\nAgents:\n${agentListString}\nHistory (last ${MAX_HISTORY_FOR_PROMPT}):\n${latestHistory}\nLatest: "${currentAgentData.name}: ${messageText}"\nWhich agent ID should speak next? Respond ONLY with the numerical ID.`;
+
+                let selectedNextAgentId = null;
+                try {
+                    const nextAgentResult = await model.generateContent({ contents: [{ role: "user", parts: [{ text: nextAgentPrompt }] }], generationConfig: { maxOutputTokens: 10, temperature: 0.2 }, safetySettings });
+                    const nextAgentResponse = await nextAgentResult.response;
+                    const nextAgentIdText = nextAgentResponse.text().trim();
+                    const parsedId = parseInt(nextAgentIdText, 10);
+                    if (!isNaN(parsedId) && agentMapById.has(parsedId)) {
+                        selectedNextAgentId = parsedId; console.log(`LLM selected Agent ${selectedNextAgentId} (${agentMapById.get(selectedNextAgentId).name}).`);
+                    } else { throw new Error(`LLM returned invalid ID: "${nextAgentIdText}"`); }
+                } catch (selectionError) {
+                    console.warn(`LLM failed to select next agent (${selectionError.message}). Falling back.`);
+                    showMessage(`LLM failed to select next agent, using round-robin.`, 'info', 2000);
+                    const currentIndex = agents.findIndex(a => a.id === currentAgentId);
+                    selectedNextAgentId = agents[(currentIndex + 1) % agents.length].id;
+                }
+
+                const nextAgentData = agentMapById.get(selectedNextAgentId);
+                nextAgentIdToSpeak = selectedNextAgentId;
+
+                // --- 4. Animate Link ---
+                if (d3LinkElements && d3ZoomableGroup && nextAgentData) {
+                    const activeLinkElement = d3LinkElements.selectAll('line.link')
+                        .filter(d => (d.source.id === currentAgentId && d.target.id === selectedNextAgentId) || (d.source.id === selectedNextAgentId && d.target.id === currentAgentId));
+                    if (!activeLinkElement.empty()) {
+                        activeLinkElement.classed('link-active', true);
+                        const linkData = activeLinkElement.datum(); let tempLabel = null;
+                        if (linkData?.source?.x != null && linkData?.target?.x != null) {
+                            const midX = (linkData.source.x + linkData.target.x) / 2, midY = (linkData.source.y + linkData.target.y) / 2;
+                            tempLabel = d3ZoomableGroup.append("text").attr("class", "link-label").attr("x", midX).attr("y", midY).attr("dy", -5).text("Next...");
+                        }
+                        setTimeout(() => { activeLinkElement.classed('link-active', false); if (tempLabel) tempLabel.remove(); }, 1500);
+                    }
+                }
+
+                // --- 5. Schedule Next Turn ---
+                currentTurn++;
+                currentAgentHighlightTimeout = setTimeout(() => { if (currentNodeElementSelection) currentNodeElementSelection.classed('agent-speaking', false); updateDashboard(); }, 1500);
+                setTimeout(() => nextTurn(selectedNextAgentId), 2000 + Math.random() * 1000);
+
+            } catch (error) {
+                console.error(`Error turn ${currentTurn + 1} for ${currentAgentData?.name || `ID ${currentAgentId}`}:`, error);
+                showMessage(`Error for ${currentAgentData?.name || 'Agent'}: ${error.message}`);
+                setSimulationState('Error'); simulationRunning = false;
+                hideAgentTooltip(); if (d3NodeElements) d3NodeElements.selectAll('g.node').classed('agent-speaking', false);
+                updateDashboard();
+            }
+        }
+
+        /** Shows the summary modal. */
+        function showSummaryModal() {
+             summaryLoader.classList.remove('hidden'); summaryTextElement.classList.add('hidden'); summaryErrorElement.classList.add('hidden');
+             summaryModalBackdrop.classList.remove('hidden');
+             requestAnimationFrame(() => { summaryModalBackdrop.classList.remove('opacity-0'); summaryModal.classList.remove('opacity-0', 'scale-95'); });
+        }
+
+        /** Hides the summary modal. */
+        function hideSummaryModal() {
+             summaryModalBackdrop.classList.add('opacity-0'); summaryModal.classList.add('opacity-0', 'scale-95');
+             summaryModalBackdrop.addEventListener('transitionend', () => { if (summaryModalBackdrop.classList.contains('opacity-0')) { summaryModalBackdrop.classList.add('hidden'); } }, { once: true });
+        }
+
+        /** Generates and displays the simulation summary. */
+        async function generateAndShowSummary() {
+            if (!model) { showMessage("Error: Model not initialized."); setSimulationState('Error'); updateDashboard(); return; }
+            setSimulationState('Summarizing'); updateDashboard(); showSummaryModal();
+            const historyString = conversationHistory.map(e => `${e.agentName}: ${e.message}`).join('\n');
+            const summaryPrompt = `Goal: "${goalPromptInput.value.trim()}"\nHistory:\n${historyString}\n\nProvide a comprehensive Markdown summary (key points, decisions, outcome).`;
+            try {
+                const result = await model.generateContent(summaryPrompt); const response = await result.response;
+                const rawSummary = response.text(); let processedSummary = rawSummary.trim();
+                const codeBlockMatch = processedSummary.match(/^```(?:md|markdown)?\s*\n([\s\S]*?)\n```$/);
+                if (codeBlockMatch?.[1]) { processedSummary = codeBlockMatch[1].trim(); }
+                if (typeof marked === 'function') { summaryTextElement.innerHTML = marked.parse(processedSummary); } else { summaryTextElement.textContent = processedSummary; }
+                summaryLoader.classList.add('hidden'); summaryTextElement.classList.remove('hidden'); summaryErrorElement.classList.add('hidden');
+                setSimulationState('Finished');
+            } catch (error) {
+                console.error("Error generating summary:", error); summaryErrorElement.textContent = `Failed to generate summary: ${error.message}`;
+                summaryLoader.classList.add('hidden'); summaryTextElement.classList.add('hidden'); summaryErrorElement.classList.remove('hidden');
+                setSimulationState('Error');
+            }
+        }
+
+        // --- Event Listener for Start/Stop Button ---
+        startSimulationButton.addEventListener('click', () => {
+            const apiKey = apiKeyInput.value.trim(); const goalPrompt = goalPromptInput?.value.trim() ?? ''; const selectedModel = modelSelect.value;
+            if (!apiKey) { showMessage("Please enter API Key."); apiKeyInput.focus(); return; }
+            if (!goalPrompt) { showMessage("Please enter goal prompt."); goalPromptInput.focus(); return; }
+            if (simulationRunning) {
+                console.log("Stopping simulation."); simulationRunning = false;
+                showMessage("Stopping simulation...", 'info', 1500);
+                startSimulationButton.disabled = true; startSimulationButton.classList.add('opacity-50', 'cursor-not-allowed');
+            } else { runRealSimulation(apiKey, goalPrompt, selectedModel); }
+        });
+
+        // --- Other Event Listeners ---
+        agentMapContainer.addEventListener('click', (event) => { if (!event.target.closest('.node')) { hideAgentTooltip(); } });
+        window.addEventListener('resize', () => {
+            hideAgentTooltip(); clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(() => {
+                if (d3Svg && agents.length > 0) {
+                    const mapRect = agentMap.getBoundingClientRect();
+                    if (mapRect.width > 0 && mapRect.height > 0) {
+                        d3Svg.attr("width", mapRect.width).attr("height", mapRect.height).attr("viewBox", [0, 0, mapRect.width, mapRect.height]);
+                        d3Simulation.force("center", d3.forceCenter(mapRect.width / 2, mapRect.height / 2)).alpha(0.3).restart();
+                    }
+                }
+            }, 500);
+        });
+        closeSummaryModalButton.addEventListener('click', hideSummaryModal);
+        summaryModalBackdrop.addEventListener('click', (event) => { if (event.target === summaryModalBackdrop) { hideSummaryModal(); } });
+
+        // --- Initial Setup ---
+        clearSimulation();
+
+    </script>
+
+</body>
+</html>
