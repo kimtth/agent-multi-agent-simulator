@@ -153,12 +153,48 @@
         <aside class="bg-white p-4 rounded-xl shadow-lg border border-slate-200 flex flex-col bottom-panel-height">
              <h2 class="text-lg font-semibold mb-3 text-slate-700 border-b pb-1.5 flex-shrink-0">Setup</h2>
              <div class="space-y-3 overflow-y-auto pr-1 flex-grow">
+                 <div>
+                     <label for="providerSelect" class="block text-sm font-medium text-slate-600 mb-1">Provider</label>
+                     <select id="providerSelect" name="providerSelect" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition duration-150 ease-in-out text-sm shadow-sm bg-white">
+                         <option value="gemini" selected>Google Gemini</option>
+                         <option value="openai">OpenAI</option>
+                         <option value="azure">Azure OpenAI</option>
+                     </select>
+                 </div>
                  <div >
                      <label for="apiKey" class="block text-sm font-medium text-slate-600 mb-1">Gemini API Key</label>
                      <div class="relative">
                          <input type="password" id="apiKey" name="apiKey" placeholder="Enter your API Key" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition duration-150 ease-in-out text-sm shadow-sm">
                          <button id="toggleApiKey" type="button" class="absolute inset-y-0 right-0 px-3 flex items-center text-slate-500 hover:text-slate-700" aria-label="Toggle API Key visibility"><span class="lucide eye-icon"></span></button> </div>
                       <p class="text-xs text-slate-500 mt-1">Handled client-side. Not stored.</p>
+                 </div>
+                 <div id="openaiModelGroup" class="hidden">
+                     <label for="openaiModel" class="block text-sm font-medium text-slate-600 mb-1">OpenAI Model</label>
+                     <select id="openaiModel" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition duration-150 ease-in-out text-sm shadow-sm bg-white">
+                         <option value="gpt-4o-mini">gpt-4o-mini (fast)</option>
+                         <option value="gpt-4.1">gpt-4.1 (advanced)</option>
+                         <option value="o3-mini">o3-mini (reasoning)</option>
+                     </select>
+                     <p class="text-xs text-slate-500 mt-1">Uses OpenAI Chat Completions API.</p>
+                 </div>
+                 <div id="azureConfigGroup" class="hidden space-y-2">
+                     <div>
+                         <label for="azureEndpoint" class="block text-sm font-medium text-slate-600 mb-1">Azure OpenAI Endpoint</label>
+                         <input type="text" id="azureEndpoint" placeholder="https://my-resource.openai.azure.com" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition text-sm shadow-sm" />
+                     </div>
+                     <div>
+                         <label for="azureDeployment" class="block text-sm font-medium text-slate-600 mb-1">Deployment Name</label>
+                         <input type="text" id="azureDeployment" placeholder="my-gpt4o-deployment" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition text-sm shadow-sm" />
+                     </div>
+                     <div>
+                         <label for="azureApiVersion" class="block text-sm font-medium text-slate-600 mb-1">API Version</label>
+                         <input type="text" id="azureApiVersion" value="2024-02-15-preview" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition text-sm shadow-sm" />
+                     </div>
+                     <div>
+                         <label for="azureModel" class="block text-sm font-medium text-slate-600 mb-1">(Optional) Model Hint</label>
+                         <input type="text" id="azureModel" placeholder="gpt-4o-mini" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition text-sm shadow-sm" />
+                         <p class="text-xs text-slate-500 mt-1">Provide deployment that maps to a model in Azure.</p>
+                     </div>
                  </div>
                  <div >
                      <label for="goalPrompt" class="block text-sm font-medium text-slate-600 mb-1">Goal Prompt</label>
@@ -223,10 +259,18 @@
 
         // --- DOM Element References ---
         const apiKeyInput = document.getElementById('apiKey');
+    const providerSelect = document.getElementById('providerSelect');
         const toggleApiKeyButton = document.getElementById('toggleApiKey');
         const eyeIcon = toggleApiKeyButton.querySelector('.eye-icon');
         const goalPromptInput = document.getElementById('goalPrompt');
         const modelSelect = document.getElementById('modelSelect');
+    const openaiModelSelect = document.getElementById('openaiModel');
+    const openaiModelGroup = document.getElementById('openaiModelGroup');
+    const azureConfigGroup = document.getElementById('azureConfigGroup');
+    const azureEndpointInput = document.getElementById('azureEndpoint');
+    const azureDeploymentInput = document.getElementById('azureDeployment');
+    const azureApiVersionInput = document.getElementById('azureApiVersion');
+    const azureModelInput = document.getElementById('azureModel');
         const startSimulationButton = document.getElementById('startSimulation');
         const agentMapContainer = document.getElementById('agentMapContainer');
         const agentMap = document.getElementById('agentMap');
@@ -263,6 +307,8 @@
         let nextAgentIdToSpeak = null;
         let genAI = null;
         let model = null;
+    let provider = 'gemini';
+    let providerInfo = {}; // holds provider-specific configuration
         let messageTimeout;
         let resizeTimeout;
         let activeTooltipAgentId = null;
@@ -285,6 +331,33 @@
             { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
             { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
         ];
+
+        /**
+         * Initialize provider-specific UI visibility.
+         */
+        function updateProviderUI() {
+            provider = providerSelect.value;
+            // Show/hide groups
+            if (provider === 'gemini') {
+                modelSelect.parentElement.classList.remove('hidden');
+                openaiModelGroup.classList.add('hidden');
+                azureConfigGroup.classList.add('hidden');
+                // Relabel API key field
+                document.querySelector("label[for='apiKey']").textContent = 'Gemini API Key';
+            } else if (provider === 'openai') {
+                modelSelect.parentElement.classList.add('hidden');
+                openaiModelGroup.classList.remove('hidden');
+                azureConfigGroup.classList.add('hidden');
+                document.querySelector("label[for='apiKey']").textContent = 'OpenAI API Key';
+            } else if (provider === 'azure') {
+                modelSelect.parentElement.classList.add('hidden');
+                openaiModelGroup.classList.add('hidden');
+                azureConfigGroup.classList.remove('hidden');
+                document.querySelector("label[for='apiKey']").textContent = 'Azure OpenAI Key';
+            }
+        }
+        providerSelect.addEventListener('change', updateProviderUI);
+        updateProviderUI();
 
         /**
          * Updates the simulation state display and button.
@@ -355,6 +428,71 @@
             dashboardAgentListElement.innerHTML = '<li class="text-slate-400">No agents yet...</li>';
             setSimulationState('Idle');
             clearTimeout(currentAgentHighlightTimeout);
+        }
+
+        /**
+         * Generic text generation across providers.
+         * @param {string} prompt
+         * @param {{maxTokens?:number, temperature?:number, reason?:string}} opts
+         * @returns {Promise<string>}
+         */
+        async function llmGenerateText(prompt, opts = {}) {
+            const { maxTokens = 256, temperature = 0.7 } = opts;
+            if (provider === 'gemini') {
+                if (!model) throw new Error('Gemini model not initialized');
+                const result = await model.generateContent({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: maxTokens, temperature }, safetySettings });
+                const response = await result.response;
+                if (!response.candidates?.[0]?.content) {
+                    throw new Error(`Gemini response blocked (${response.promptFeedback?.blockReason || 'Unknown'})`);
+                }
+                return response.text();
+            } else if (provider === 'openai') {
+                const openaiModel = openaiModelSelect.value;
+                const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiKeyInput.value.trim()}`
+                    },
+                    body: JSON.stringify({
+                        model: openaiModel,
+                        messages: [{ role: 'user', content: prompt }],
+                        max_tokens: maxTokens,
+                        temperature
+                    })
+                });
+                if (!resp.ok) {
+                    const errTxt = await resp.text();
+                    throw new Error(`OpenAI error ${resp.status}: ${errTxt}`);
+                }
+                const data = await resp.json();
+                return data.choices?.[0]?.message?.content?.trim() || '(empty)';
+            } else if (provider === 'azure') {
+                const endpoint = azureEndpointInput.value.trim().replace(/\/$/, '');
+                const deployment = azureDeploymentInput.value.trim();
+                const apiVersion = azureApiVersionInput.value.trim();
+                if (!endpoint || !deployment || !apiVersion) throw new Error('Azure endpoint, deployment and API version required');
+                const url = `${endpoint}/openai/deployments/${deployment}/chat/completions?api-version=${encodeURIComponent(apiVersion)}`;
+                const resp = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'api-key': apiKeyInput.value.trim()
+                    },
+                    body: JSON.stringify({
+                        messages: [{ role: 'user', content: prompt }],
+                        max_tokens: maxTokens,
+                        temperature
+                    })
+                });
+                if (!resp.ok) {
+                    const errTxt = await resp.text();
+                    throw new Error(`Azure OpenAI error ${resp.status}: ${errTxt}`);
+                }
+                const data = await resp.json();
+                return data.choices?.[0]?.message?.content?.trim() || '(empty)';
+            }
+            throw new Error('Unsupported provider');
         }
 
         /**
@@ -583,14 +721,18 @@
             simulationRunning = true; setSimulationState('Planning'); updateDashboard();
 
             try {
-                genAI = new GoogleGenerativeAI(apiKey);
-                model = genAI.getGenerativeModel({ model: selectedModel });
-                addLogEntry("System", "Asking Gemini to plan agents...");
+                if (provider === 'gemini') {
+                    genAI = new GoogleGenerativeAI(apiKey);
+                    model = genAI.getGenerativeModel({ model: selectedModel });
+                    addLogEntry("System", "Planning agents with Gemini...");
+                } else if (provider === 'openai') {
+                    addLogEntry("System", "Planning agents with OpenAI...");
+                } else if (provider === 'azure') {
+                    addLogEntry("System", "Planning agents with Azure OpenAI...");
+                }
 
-                const planningPrompt = `Based on the goal "${goalPrompt}", define agents, links, tools, and knowledge. Return ONLY valid JSON { "agents": [ { "id": n, "name": "...", "role": "...", "tools": [], "knowledge": [] } ], "links": [ { "source": id1, "target": id2 } ] }. Ensure agents are connected.`;
-
-                const planningResult = await model.generateContent(planningPrompt);
-                const planningResponse = await planningResult.response; const planningText = planningResponse.text();
+                const planningPrompt = `You are orchestrating a multi-agent simulation. Goal: "${goalPrompt}". Define a concise plan. Return ONLY pure JSON (no markdown fences) of shape {"agents":[{"id":1,"name":"...","role":"...","tools":[],"knowledge":[]}],"links":[{"source":1,"target":2}]}. 4-12 agents. IDs consecutive starting at 1. Include at least one link for each agent.`;
+                const planningText = await llmGenerateText(planningPrompt, { maxTokens: 800, temperature: 0.8, reason: 'planning' });
                 const simulationPlan = parseSimulationPlan(planningText);
                 if (!simulationPlan) { throw new Error("Failed to get a valid simulation plan."); }
 
@@ -666,12 +808,7 @@
                 const historyString = conversationHistory.map(e => `${e.agentName}: ${e.message}`).join('\n');
                 const turnPrompt = `Goal: "${goalPromptInput.value.trim()}"\nYou are Agent ${currentAgentData.id}: **${currentAgentData.name}** (${currentAgentData.role}).\nTools: [${currentAgentData.tools.join(', ') || 'None'}] Knowledge: [${currentAgentData.knowledge.join(', ') || 'None'}]\nHistory (last ${MAX_HISTORY_FOR_PROMPT}):\n${historyString.split('\n').slice(-MAX_HISTORY_FOR_PROMPT).join('\n') || "(None)"}\nGenerate your response. If goal complete, end with "${GOAL_COMPLETE_TAG}". Response:`;
 
-                const turnResult = await model.generateContent({ contents: [{ role: "user", parts: [{ text: turnPrompt }] }], generationConfig: { maxOutputTokens: 150 }, safetySettings });
-                const turnResponse = await turnResult.response;
-
-                if (!turnResponse.candidates?.[0]?.content) { throw new Error(`Response blocked by safety filter (${turnResponse.promptFeedback?.blockReason || 'Unknown'}).`); }
-
-                messageText = turnResponse.text().trim();
+                messageText = (await llmGenerateText(turnPrompt, { maxTokens: 180, temperature: 0.75, reason: 'agent_turn' })).trim();
                 if (messageText.endsWith(GOAL_COMPLETE_TAG)) { goalAchieved = true; messageText = messageText.slice(0, -GOAL_COMPLETE_TAG.length).trim(); }
                 if (messageText.startsWith(`${currentAgentData.name}:`)) { messageText = messageText.substring(currentAgentData.name.length + 1).trim(); }
                 if (messageText.startsWith('"') && messageText.endsWith('"')) { messageText = messageText.substring(1, messageText.length - 1); }
@@ -702,9 +839,7 @@
 
                 let selectedNextAgentId = null;
                 try {
-                    const nextAgentResult = await model.generateContent({ contents: [{ role: "user", parts: [{ text: nextAgentPrompt }] }], generationConfig: { maxOutputTokens: 10, temperature: 0.2 }, safetySettings });
-                    const nextAgentResponse = await nextAgentResult.response;
-                    const nextAgentIdText = nextAgentResponse.text().trim();
+                        const nextAgentIdText = (await llmGenerateText(nextAgentPrompt, { maxTokens: 8, temperature: 0.2, reason: 'agent_selection' })).trim();
                     const parsedId = parseInt(nextAgentIdText, 10);
                     if (!isNaN(parsedId) && agentMapById.has(parsedId)) {
                         selectedNextAgentId = parsedId; console.log(`LLM selected Agent ${selectedNextAgentId} (${agentMapById.get(selectedNextAgentId).name}).`);
@@ -763,13 +898,13 @@
 
         /** Generates and displays the simulation summary. */
         async function generateAndShowSummary() {
-            if (!model) { showMessage("Error: Model not initialized."); setSimulationState('Error'); updateDashboard(); return; }
+            if (provider === 'gemini' && !model) { showMessage("Error: Model not initialized."); setSimulationState('Error'); updateDashboard(); return; }
             setSimulationState('Summarizing'); updateDashboard(); showSummaryModal();
             const historyString = conversationHistory.map(e => `${e.agentName}: ${e.message}`).join('\n');
             const summaryPrompt = `Goal: "${goalPromptInput.value.trim()}"\nHistory:\n${historyString}\n\nProvide a comprehensive Markdown summary (key points, decisions, outcome).`;
             try {
-                const result = await model.generateContent(summaryPrompt); const response = await result.response;
-                const rawSummary = response.text(); let processedSummary = rawSummary.trim();
+                const rawSummary = await llmGenerateText(summaryPrompt, { maxTokens: 600, temperature: 0.4, reason: 'summary' });
+                let processedSummary = rawSummary.trim();
                 const codeBlockMatch = processedSummary.match(/^```(?:md|markdown)?\s*\n([\s\S]*?)\n```$/);
                 if (codeBlockMatch?.[1]) { processedSummary = codeBlockMatch[1].trim(); }
                 if (typeof marked === 'function') { summaryTextElement.innerHTML = marked.parse(processedSummary); } else { summaryTextElement.textContent = processedSummary; }
