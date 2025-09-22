@@ -1,9 +1,25 @@
 import type { AgentDefinition } from '../types'
 import type { TurnMessage } from '../types'
+import type { OrchestrationPattern } from '../types'
 
 export const GOAL_COMPLETE_TAG = '[GOAL_COMPLETE]'
 
-export function planningPrompt(goal: string) {
+export function planningPrompt(goal: string, opts?: { allowFictitiousTools?: boolean }) {
+  const allow = opts?.allowFictitiousTools
+  if (allow) {
+    return `Goal: "${goal}".
+Design a concise set of 4-10 collaborating discussion agents.
+Return ONLY valid JSON:
+{ "agents": [ { "id": 1, "name": "...", "role": "...", "tools": ["<fictional-or-conceptual tool 1>", "..."], "knowledge": ["<domain note>", "..."] }, ... ],
+  "links": [ { "source": 1, "target": 2 } ] }
+Rules:
+- You MAY invent lightweight, clearly fictional or conceptual tools (max 3 per agent) that are self-descriptive (e.g. "MarketTrendSynth", "DataClusterAnnotator").
+- Tools must be harmless, abstract, and NOT real brand/product names.
+- knowledge: short domain focus phrases (0-3 each).
+- Every agent must have at least one link (undirected semantics).
+- Keep names short and roles distinct.
+JSON only.`
+  }
   return `Goal: "${goal}".
 Design a concise set of 4-10 collaborating discussion agents ONLY.
 Return ONLY valid JSON:
@@ -52,10 +68,30 @@ When (and only when) the goal is genuinely satisfied, append ${GOAL_COMPLETE_TAG
 Response (no prefacing with your name):`
 }
 
-export function nextAgentPrompt(goal: string, agents: AgentDefinition[], history: TurnMessage[], current: TurnMessage, maxHistory: number) {
+export function nextAgentPrompt(
+  goal: string,
+  agents: AgentDefinition[],
+  history: TurnMessage[],
+  current: TurnMessage,
+  maxHistory: number,
+  pattern: OrchestrationPattern
+) {
   const agentList = agents.map(a => `- ID: ${a.id}, Name: ${a.name}, Role: ${a.role}`).join('\n')
   const last = history.slice(-maxHistory).map(h => `${h.agentName}: ${h.message}`).join('\n')
-  return `Goal: "${goal}"\nAgents:\n${agentList}\nHistory (last ${maxHistory}):\n${last}\nLatest: "${current.agentName}: ${current.message}"\nWhich agent ID should speak next? Respond ONLY with the numerical ID.`
+  let directive = 'Select the most appropriate next contributor.'
+  if (pattern === 'handoff') directive = 'Route the task: choose the single next agent whose ROLE best matches what should happen next.'
+  else if (pattern === 'group-chat') directive = 'Debate style: pick an agent that advances or critiques; avoid repetition.'
+  else if (pattern === 'magentic') directive = 'Manager planning: pick a specialized agent (avoid choosing the manager again unless refinement is required).'
+  // sequential / concurrent will not call this in client, but keep safe:
+  else if (pattern === 'sequential' || pattern === 'concurrent') directive = 'If invoked (fallback), choose the next numerical ID in order.'
+  return `Goal: "${goal}"
+Agents:
+${agentList}
+History (last ${maxHistory}):
+${last}
+Latest: "${current.agentName}: ${current.message}"
+${directive}
+Respond ONLY with the numerical ID.`
 }
 
 export function summaryPrompt(goal: string, history: TurnMessage[]) {

@@ -4,7 +4,7 @@ import { Theme, ThemePanel } from '@radix-ui/themes'
 import '@radix-ui/themes/styles.css'
 
 export const metadata = {
-  title: 'Multi-Agent LLM Simulator',
+  title: 'Visual Agent: Interactive Multi-Agent Lab',
   description: 'Refactored React/Next.js multi-agent simulation with Azure OpenAI & OpenAI support'
 }
 

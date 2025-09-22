@@ -23,6 +23,18 @@
 - Height Constraints: graph & dashboard capped at 60% viewport height for better layout.
 - Prompt Refinement: purely discussion-based (no real tool/code execution), delayed completion tag.
 
+## 🧪 Orchestration Patterns (New Dropdown)
+
+Selectable patterns (in Setup panel):
+
+- Group Chat: LLM chooses next speaker (collaborative debate).
+- Sequential: Fixed pipeline order (deterministic round-robin).
+- Concurrent: All agents speak in order each cycle (future hook for true parallelism).
+- Handoff: LLM routes to most capable next agent (capability-based handoff).
+- Magentic (Manager): First agent is manager; manager plans & delegates; non‑manager agents hand control back.
+
+(Concepts align with Microsoft Learn multi-agent orchestration guidance; see user-provided references.)
+
 ## 🗂 Project Structure (New)
 
 ```

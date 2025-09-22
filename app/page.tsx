@@ -7,6 +7,7 @@ import { BrainCircuit, Wand2 } from 'lucide-react'
 import { InformationCircleIcon, PlayIcon, StopIcon } from '@heroicons/react/24/outline'
 
 type SimState = 'Idle' | 'Planning' | 'Running' | 'SelectingNext' | 'Summarizing' | 'Finished' | 'Error'
+type OrchestrationPattern = 'sequential' | 'concurrent' | 'group-chat' | 'handoff' | 'magentic'
 
 export default function Page() {
   const [goal, setGoal] = useState('Analyze the economic impact of Donald Trump’s tariffs on Japan.')
@@ -18,11 +19,14 @@ export default function Page() {
   const [currentMessage, setCurrentMessage] = useState('')
   const [turn, setTurn] = useState(0)
   const [summary, setSummary] = useState<string | null>(null)
-  const [fastMode, setFastMode] = useState(false)
+  const [fastMode, setFastMode] = useState(true)
   const [maxTurns, setMaxTurns] = useState(20)
   const [lastSaved, setLastSaved] = useState<string | null>(null)
   const [showSummaryDialog, setShowSummaryDialog] = useState(false)
   const [showCurrentDialog, setShowCurrentDialog] = useState(false) // dialog for current message
+  const [pattern, setPattern] = useState<OrchestrationPattern>('group-chat')
+  const [allowFictitiousTools, setAllowFictitiousTools] = useState(false) // NEW
+  const [usage, setUsage] = useState<{ tokens: number; cost: number } | null>(null) // NEW approximate usage
   const stopRef = useRef(false)
   const turnAbortController = useRef<AbortController | null>(null)
   const summaryInProgressRef = useRef(false)
@@ -42,11 +46,14 @@ export default function Page() {
     // if a previous controller exists, abort it
     turnAbortController.current?.abort()
     try {
-      const res = await fetch('/api/sim/plan', { method: 'POST', body: JSON.stringify({ goal, provider }) })
+      const res = await fetch('/api/sim/plan', {
+        method: 'POST',
+        body: JSON.stringify({ goal, provider, allowFictitiousTools }) // include flag
+      })
       const json = await res.json(); if (!res.ok) throw new Error(json.error)
       setPlan(json); setState('Running'); setCurrentAgentId(json.agents[0].id); setTurn(0)
     } catch (e) { console.error(e); setState('Error') }
-  }, [goal, provider])
+  }, [goal, provider, allowFictitiousTools])
 
   useEffect(() => {
     if (!plan || currentAgentId == null || stopRef.current || state !== 'Running') return
@@ -80,35 +87,54 @@ export default function Page() {
           return
         }
         setState('SelectingNext')
-        // abort previous before next-agent fetch
-        turnAbortController.current?.abort()
-        const nextAborter = new AbortController()
-        turnAbortController.current = nextAborter
-        const nr = await fetch('/api/sim/next-agent', {
-          method: 'POST',
-            body: JSON.stringify({
-              goal,
-              history: [...history, msg],
-              agents: plan.agents,
-              current: msg,
-              provider
-            }),
-            signal: nextAborter.signal
-        })
-        if (stopRef.current || nextAborter.signal.aborted) return
-        if (!nr.ok) { setState('Error'); return }
-        const njson = await nr.json()
-        if (stopRef.current) return
+        const agentsArr = plan.agents
+        const managerId = agentsArr[0]?.id
+        let nextId: number | null = null
+        if (pattern === 'sequential') {
+          const idx = agentsArr.findIndex(a => a.id === currentAgentId)
+          nextId = agentsArr[(idx + 1) % agentsArr.length].id
+        } else if (pattern === 'concurrent') {
+          // Same as sequential for now (placeholder for future parallel batching)
+          const idx = agentsArr.findIndex(a => a.id === currentAgentId)
+          nextId = agentsArr[(idx + 1) % agentsArr.length].id
+        } else if (pattern === 'magentic') {
+          if (currentAgentId !== managerId) {
+            // Hand control back to manager
+            nextId = managerId
+          } else {
+            // Manager chooses a specialist
+            const nr = await fetch('/api/sim/next-agent', {
+              method: 'POST',
+              body: JSON.stringify({ goal, history: [...history, msg], agents: agentsArr, current: msg, provider, pattern })
+            })
+            if (!nr.ok) { setState('Error'); return }
+              const njson = await nr.json()
+            nextId = njson.id === managerId && agentsArr.length > 1
+              ? (agentsArr[1].id) // fallback to first non-manager if model loops
+              : njson.id
+          }
+        } else if (pattern === 'handoff' || pattern === 'group-chat') {
+          const nr = await fetch('/api/sim/next-agent', {
+            method: 'POST',
+            body: JSON.stringify({ goal, history: [...history, msg], agents: agentsArr, current: msg, provider, pattern })
+          })
+          if (!nr.ok) { setState('Error'); return }
+          const njson = await nr.json()
+          nextId = njson.id
+        } else {
+          nextId = null
+        }
+        if (nextId == null) { setState('Finished'); return }
         setTurn(t => t + 1)
         setState('Running')
-        setCurrentAgentId(njson.id)
+        setCurrentAgentId(nextId)
       } catch (e) {
         if (stopRef.current) return
         if ((e as any)?.name === 'AbortError') return
         setState('Error')
       }
     })()
-  }, [currentAgentId, plan, state, provider, goal, history, maxTurns, fastMode])
+  }, [currentAgentId, plan, state, provider, goal, history, maxTurns, fastMode, pattern])
 
   const stop = async () => {
     stopRef.current = true
@@ -129,6 +155,15 @@ export default function Page() {
       if (!sr.ok) { if (!stopRef.current) setState('Error'); return }
       const sjson = await sr.json()
       setSummary(sjson.markdown)
+      // --- approximate token usage (very rough: chars/4) ---
+      const estimateTokens = (txt: string) => Math.max(1, Math.ceil(txt.replace(/\s+/g,' ').trim().length / 4))
+      const historyText = hist.map(h => `${h.agentName}: ${h.message}`).join('\n')
+      const totalText = `${goal}\n${historyText}\n${sjson.markdown}`
+      const tokens = estimateTokens(totalText)
+      const COST_PER_1K = provider === 'azure-openai' ? 0.002 : 0.002 // placeholder flat rate
+      const cost = (tokens / 1000) * COST_PER_1K
+      setUsage({ tokens, cost })
+      // --- end usage calc ---
       setState('Finished')
     } catch {
       if (!stopRef.current) setState('Error')
@@ -149,7 +184,10 @@ export default function Page() {
       turn,
       summary,
       maxTurns,
-      fastMode
+      fastMode,
+      pattern,
+      allowFictitiousTools, // existing
+      usage: usage ? { tokens: usage.tokens, cost: usage.cost } : undefined, // NEW
     }
   }
   function exportJSON() {
@@ -160,18 +198,13 @@ export default function Page() {
     a.download = 'simulation-export.json'
     a.click()
   }
-  function loadLocal() {
-    const raw = localStorage.getItem('simulator:last')
-    if (!raw) return
-    loadFromObject(JSON.parse(raw))
-  }
   function onFileLoad(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]; if (!file) return
     const reader = new FileReader()
     reader.onload = () => { try { loadFromObject(JSON.parse(String(reader.result))) } catch { /* ignore */ } }
     reader.readAsText(file)
   }
-  function loadFromObject(obj: SavedSimulation) {
+  function loadFromObject(obj: SavedSimulation & { pattern?: OrchestrationPattern }) {
     if (!obj || obj.version !== 1) return
     setGoal(obj.goal)
     setProvider(obj.provider)
@@ -182,6 +215,9 @@ export default function Page() {
     setSummary(obj.summary || null)
     setMaxTurns(obj.maxTurns || 20)
     setFastMode(!!obj.fastMode)
+    setPattern(obj.pattern || 'group-chat')
+    setAllowFictitiousTools(!!(obj as any).allowFictitiousTools)
+    setUsage(obj.usage ? { tokens: obj.usage.tokens, cost: obj.usage.cost } : null) 
     // derive state
     if (obj.summary) setState('Finished')
     else if (obj.plan) setState('Running')
@@ -203,10 +239,10 @@ export default function Page() {
   return (
     <div className="h-screen w-full flex flex-col overflow-hidden p-4 md:p-6 lg:p-8 gap-4">
       <header className="shrink-0 text-center">
-        <h1 className="text-3xl font-bold text-slate-800 flex items-center gap-2 justify-center"><BrainCircuit className="w-8 h-8 text-indigo-600" />Multi-Agent LLM Simulator</h1>
+        <h1 className="text-3xl font-bold text-slate-800 flex items-center gap-2 justify-center"><BrainCircuit className="w-8 h-8 text-indigo-600" />Visual Agent: Interactive Multi-Agent Lab</h1>
         <p className="text-slate-600 mt-1 text-sm flex items-center gap-1 justify-center"><InformationCircleIcon className="w-4 h-4" />Visualize agents, drag, zoom.</p>
       </header>
-      <div className="flex flex-col lg:flex-row gap-6 h-[48%] min-h-0">
+      <div className="flex flex-col lg:flex-row gap-6 h-[42%] min-h-0">
         <aside className="lg:w-1/4 bg-white p-4 rounded-xl shadow border border-slate-200 flex flex-col overflow-hidden">
           <h2 className="text-lg font-semibold mb-3 shrink-0">Dashboard</h2>
           <div className="space-y-4 text-sm pr-1 flex-grow overflow-y-auto min-h-0">
@@ -232,6 +268,20 @@ export default function Page() {
                 )) || <li className="text-slate-400">No agents yet...</li>}
               </ul>
             </div>
+            {summary && state==='Finished' && usage && (
+              <>
+                <div>
+                  <h3 className="font-semibold text-slate-600 mb-1">Tokens:</h3>
+                  <p className="text-xs text-slate-500">
+                    {usage.tokens.toLocaleString()} <span className="opacity-60">(heuristic chars/4)</span>
+                  </p>
+                </div>
+                <div>
+                  <h3 className="font-semibold text-slate-600 mb-1">Cost (est):</h3>
+                  <p className="text-xs text-slate-500">${usage.cost.toFixed(4)}</p>
+                </div>
+              </>
+            )}
           </div>
         </aside>
         <section className="flex-grow bg-white rounded-xl shadow border border-slate-200 relative flex flex-col overflow-hidden">
@@ -251,13 +301,13 @@ export default function Page() {
           )}
         </section>
       </div>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[48%] min-h-0">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[50%] min-h-0">
         <aside className="bg-white p-4 rounded-xl shadow border border-slate-200 flex flex-col overflow-hidden">
           <h2 className="text-lg font-semibold mb-3 shrink-0">Setup</h2>
           <div className="space-y-3 pr-1 flex-grow overflow-y-auto min-h-0">
             <div>
               <label className="block text-xs font-medium mb-1">Goal Prompt</label>
-              <textarea className="w-full px-3 py-5 rounded-lg border border-slate-300 text-sm resize-none" rows={3} value={goal} onChange={e=>setGoal(e.target.value)} />
+              <textarea className="w-full px-3 py-5 rounded-lg border border-slate-300 text-sm resize-none" rows={2} value={goal} onChange={e=>setGoal(e.target.value)} />
             </div>
             <div>
               <label className="block text-xs font-medium mb-1">Provider</label>
@@ -267,17 +317,44 @@ export default function Page() {
               </select>
             </div>
             <div>
+              <label className="block text-xs font-medium mb-1">Pattern</label>
+              <select
+                value={pattern}
+                onChange={e=>setPattern(e.target.value as OrchestrationPattern)}
+                className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm"
+                disabled={state!=='Idle' && state!=='Finished' && state!=='Error'}
+              >
+                <option value="group-chat">Group Chat (debate)</option>
+                <option value="sequential">Sequential (pipeline)</option>
+                <option value="concurrent">Concurrent (round-robin)</option>
+                <option value="handoff">Handoff (capability routing)</option>
+                <option value="magentic">Magentic (manager planner)</option>
+              </select>
+            </div>
+            <div>
               <label className="block text-xs font-medium mb-1">Max Turns</label>
               <input type="number" min={3} className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm"
                      value={maxTurns} onChange={e=>setMaxTurns(Number(e.target.value)||0)} />
             </div>
-            <div className="flex items-center gap-2">
-              <input id="fastMode" type="checkbox" checked={fastMode} onChange={e=>setFastMode(e.target.checked)} />
-              <label htmlFor="fastMode" className="text-xs font-medium">Fast Discussion Mode</label>
+            <div className="flex items-center gap-6"> {/* replaced single checkbox row */}
+              <div className="flex items-center gap-2">
+                <input id="fastMode" type="checkbox" checked={fastMode} onChange={e=>setFastMode(e.target.checked)} />
+                <label htmlFor="fastMode" className="text-xs font-medium">Fast Discussion Mode</label>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  id="fictTools"
+                  type="checkbox"
+                  checked={allowFictitiousTools}
+                  onChange={e=>setAllowFictitiousTools(e.target.checked)}
+                  disabled={state !== 'Idle' && state !== 'Finished' && state !== 'Error'}
+                />
+                <label htmlFor="fictTools" className="text-xs font-medium">Fictitious Tools</label>
+              </div>
             </div>
             <div className="pt-2 grid grid-cols-2 gap-2 text-xs">
               {state === 'Running' || state === 'SelectingNext' ? (
-                <Button onClick={stop} className="w-full col-span-2" variant="destructive">
+                <Button onClick={stop} className="w-full col-span-2">
                   <StopIcon className="w-4 h-4" /> Stop Simulation
                 </Button>
               ) : (
@@ -303,10 +380,23 @@ export default function Page() {
         </section>
         <aside className="bg-white p-4 rounded-xl shadow border border-slate-200 flex flex-col overflow-hidden">
           <h2 className="text-lg font-semibold mb-3 shrink-0">Current Message</h2>
-          <div className="flex-grow text-sm space-y-2 overflow-y-auto min-h-0">
+                    <div className="flex-grow text-sm space-y-2 overflow-y-auto min-h-0">
             {state==='Summarizing' && <p className="text-slate-500">Generating summary...</p>}
             {summary ? (
-              <div className="prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: mdToHTML(summary) }} />
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-semibold text-indigo-700">Summary</span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={()=>setShowSummaryDialog(true)}
+                  >
+                    Pop Out
+                  </Button>
+                </div>
+                <div className="prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: mdToHTML(summary) }} />
+              </div>
             ) : currentAgentId && (state==='Running' || state==='SelectingNext') ? (
               <div className="space-y-2">
                 <div className="font-semibold text-indigo-700 flex items-center justify-between">
