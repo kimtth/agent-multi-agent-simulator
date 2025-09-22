@@ -1,6 +1,6 @@
 # Multi Agent Simulator
 
-⚛️ **Refactored to Next.js (TypeScript)**: A Multi-Agent System Simulator 🤖 that uses Large Language Models (LLMs) to simulate agent interactions, visualize relationships, and facilitate collaborative goal achievement. Originally inspired by [this thread](https://x.com/algo_diver/status/1909257761013322112). The legacy standalone prototype remains in `ref/multi_agent_simulator.html` (untouched as requested).
+⚛️ **Refactored to Next.js (TypeScript)**: A Multi-Agent System Simulator 🤖 that uses Large Language Models (LLMs) to simulate agent interactions, visualize relationships, and facilitate collaborative goal achievement. Originally inspired by [this thread](https://x.com/algo_diver/status/1909257761013322112). The legacy standalone prototype remains in `ref/multi_agent_simulator.html`.
 
 ## ✨ Features
 
@@ -20,10 +20,9 @@
 - Early Stop Summary: stopping generates an immediate conclusion.
 - Save / Load: persist state to localStorage or JSON.
 - Export Conversation: download full simulation JSON (plan + history + settings).
-- Height Constraints: graph & dashboard capped at 60% viewport height for better layout.
-- Prompt Refinement: purely discussion-based (no real tool/code execution), delayed completion tag.
+- Fictional tools: Agent simulation with fictional tools.
 
-## 🧪 Orchestration Patterns (New Dropdown)
+## 🧪 Orchestration Patterns
 
 Selectable patterns (in Setup panel):
 
@@ -33,9 +32,9 @@ Selectable patterns (in Setup panel):
 - Handoff: LLM routes to most capable next agent (capability-based handoff).
 - Magentic (Manager): First agent is manager; manager plans & delegates; non‑manager agents hand control back.
 
-(Concepts align with Microsoft Learn multi-agent orchestration guidance; see user-provided references.)
+Concepts align with Microsoft Learn multi-agent orchestration guidance;
 
-## 🗂 Project Structure (New)
+## 🗂 Project Structure
 
 ```
 app/
