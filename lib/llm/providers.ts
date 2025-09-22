@@ -1,5 +1,5 @@
 import OpenAI from 'openai'
-import type { AgentDefinition, LLMProviderName, SimulationPlan, TurnMessage } from '../types'
+import type { AgentDefinition, LLMProviderName, SimulationPlan, TurnMessage, OrchestrationPattern } from '../types'
 import { planningPrompt, turnPrompt, nextAgentPrompt, summaryPrompt, GOAL_COMPLETE_TAG } from './prompts'
 
 const MAX_HISTORY_FOR_PROMPT = 10
@@ -13,7 +13,7 @@ function supportsTemperature(model: string) {
 interface BaseArgs { goal: string }
 export interface PlanArgs extends BaseArgs { }
 export interface TurnArgs extends BaseArgs { history: TurnMessage[]; agent: AgentDefinition; meta?: { maxTurns?: number; turnIndex?: number; fastMode?: boolean } }
-export interface NextAgentArgs extends BaseArgs { history: TurnMessage[]; agents: AgentDefinition[]; current: TurnMessage }
+export interface NextAgentArgs extends BaseArgs { history: TurnMessage[]; agents: AgentDefinition[]; current: TurnMessage; pattern: OrchestrationPattern }
 export interface SummaryArgs extends BaseArgs { history: TurnMessage[] }
 
 function buildClient(provider: LLMProviderName) {
@@ -112,11 +112,11 @@ export async function turn({ goal, history, agent, provider, meta }: TurnArgs & 
   return { message: txt || '(empty)', goalComplete }
 }
 
-export async function pickNext({ goal, history, agents, current, provider }: NextAgentArgs & { provider: LLMProviderName }): Promise<number> {
+export async function pickNext({ goal, history, agents, current, provider, pattern }: NextAgentArgs & { provider: LLMProviderName }) {
   const client = buildClient(provider)
   const content = await chatJSON(client, provider, [
     { role: 'system', content: 'Decide the next agent id only.' },
-    { role: 'user', content: nextAgentPrompt(goal, agents, history, current, MAX_HISTORY_FOR_PROMPT) }
+    { role: 'user', content: nextAgentPrompt(goal, agents, history, current, MAX_HISTORY_FOR_PROMPT, pattern) }
   ])
   const id = parseInt(content.trim(), 10)
   if (isNaN(id) || !agents.find(a => a.id === id)) {

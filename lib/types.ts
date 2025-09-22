@@ -22,7 +22,7 @@ export interface TurnRequestBody {
   history: TurnMessage[]
   agent: AgentDefinition
   provider?: LLMProviderName
-  meta?: { maxTurns?: number; turnIndex?: number; fastMode?: boolean }
+  meta?: { maxTurns?: number; turnIndex?: number; fastMode?: boolean; pattern?: OrchestrationPattern }
 }
 
 export interface SavedSimulation {
@@ -37,6 +37,10 @@ export interface SavedSimulation {
   summary?: string | null
   maxTurns: number
   fastMode: boolean
+  pattern: OrchestrationPattern
+  allowFictitiousTools: boolean // whether planning can generate fictional tools
+  usage?: { tokens: number; cost: number } // optional usage snapshot
 }
 
 export type LLMProviderName = 'openai' | 'azure-openai'
+export type OrchestrationPattern = 'sequential' | 'concurrent' | 'group-chat' | 'handoff' | 'magentic'
